@@ -65,6 +65,12 @@ button{font:inherit;cursor:pointer}
 .meta{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font-size:12px;color:var(--muted)}
 .pill{font-family:var(--f-mono);font-size:11px;border-radius:999px;padding:2px 8px;background:var(--accent-soft);color:var(--accent)}
 .item.done .pill{background:var(--surface);color:var(--done)}
+.imgs{display:flex;flex-wrap:wrap;gap:8px}
+.imgs button{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:0;overflow:hidden;width:96px;height:72px}
+.imgs img{width:100%;height:100%;object-fit:cover;display:block}
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.85);display:grid;place-items:center;z-index:50;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.lb img{max-width:100%;max-height:100%;border-radius:8px;background:#fff}
+.lb .x{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));right:12px;border:0;background:#fff;color:#111;border-radius:999px;width:40px;height:40px;font-size:22px;line-height:1}
 .empty{border:1px dashed var(--line);border-radius:12px;padding:28px 20px;text-align:center;color:var(--muted)}
 .empty strong{display:block;color:var(--fg);margin-bottom:4px}
 @media (max-width:760px){
@@ -131,12 +137,20 @@ function toItems(rows){
   if(!rows.length)return[];
   const h=rows[0].map(x=>x.trim().toLocaleLowerCase("tr"));
   const col=n=>h.findIndex(x=>x.startsWith(n));
-  const ix={tarih:col("tarih"),no:col("no"),baslik:col("başlık"),tur:col("tür"),sorun:col("sorun"),bek:col("beklenen"),durum:col("durum"),ydt:col("yapıldı")};
+  const ix={tarih:col("tarih"),no:col("no"),baslik:col("başlık"),tur:col("tür"),sorun:col("sorun"),bek:col("beklenen"),durum:col("durum"),ydt:col("yapıldı"),gorsel:col("görsel")};
   const g=(r,k)=>ix[k]>=0?(r[ix[k]]||"").trim():"";
   return rows.slice(1).filter(r=>g(r,"baslik")).map(r=>({
     tarih:g(r,"tarih")||"Tarihsiz",no:g(r,"no"),title:g(r,"baslik"),tur:g(r,"tur"),
-    sorun:g(r,"sorun"),beklenen:g(r,"bek"),done:isDone(g(r,"durum")),doneAt:g(r,"ydt")
+    sorun:g(r,"sorun"),beklenen:g(r,"bek"),done:isDone(g(r,"durum")),doneAt:g(r,"ydt"),
+    imgs:imgLinks(g(r,"gorsel"))
   }));
+}
+// Görsel hücresindeki linkleri ayır; Drive linklerini gösterilebilir adrese çevir
+function imgLinks(cell){
+  return (cell.match(/https?:\/\/[^\s,;]+/g)||[]).map(u=>{
+    const m=u.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:export=\w+&)?id=)([\w-]+)/);
+    return m?{thumb:`https://drive.google.com/thumbnail?id=${m[1]}&sz=w400`,full:`https://drive.google.com/thumbnail?id=${m[1]}&sz=w2000`}:{thumb:u,full:u};
+  });
 }
 async function load(){
   try{
@@ -194,6 +208,7 @@ function render(){
           <div class="ititle"><span class="no">Madde ${esc(it.no)}</span><span>${esc(it.title)}</span></div>
           ${it.sorun?`<div class="row"><b>${/talep/i.test(it.tur)?"Talep":"Sorun"}</b>${esc(it.sorun)}</div>`:""}
           ${it.beklenen?`<div class="row"><b>Beklenen</b>${esc(it.beklenen)}</div>`:""}
+          ${it.imgs.length?`<div class="imgs">${it.imgs.map((im,k)=>`<button data-full="${esc(im.full)}" aria-label="Görsel ${k+1} büyüt"><img src="${esc(im.thumb)}" alt="Görsel ${k+1}" loading="lazy"></button>`).join("")}</div>`:""}
           <div class="meta"><span class="pill">${it.done?"Yapıldı"+(it.doneAt?" · "+esc(it.doneAt):""):"Bekliyor"}</span></div>
         </div>
       </article>`).join(""):'<div class="empty">Bu filtrede madde yok.</div>'}</div>`;
@@ -202,11 +217,19 @@ function render(){
 
 //#region Olaylar
 document.addEventListener("click",e=>{
+  // Büyük görseli kapat
+  if(e.target.closest(".lb")&&!e.target.closest("img")){e.target.closest(".lb").remove();return}
   const b=e.target.closest("button");if(!b)return;
+  if(b.dataset.full){
+    const lb=document.createElement("div");lb.className="lb";
+    lb.innerHTML=`<button class="x" aria-label="Kapat">×</button><img src="${esc(b.dataset.full)}" alt="">`;
+    document.body.appendChild(lb);return;
+  }
   if(b.dataset.tab){S.tab=b.dataset.tab;history.replaceState(null,"","#"+encodeURIComponent(S.tab));render()}
   else if(b.dataset.date){S.sel[S.tab]=b.dataset.date;render()}
   else if(b.dataset.filter){S.filter=b.dataset.filter;render()}
 });
+document.addEventListener("keydown",e=>{if(e.key==="Escape")document.querySelector(".lb")?.remove()});
 load();setInterval(load,REFRESH_MS);
 //#endregion
 </script>
