@@ -51,6 +51,9 @@ button{font:inherit;cursor:pointer}
 .item{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:grid;grid-template-columns:auto 1fr;gap:4px 14px}
 .item.done{background:var(--done-soft);border-color:transparent}
 .chk{width:26px;height:26px;border-radius:7px;border:2px solid var(--line);background:var(--surface);display:grid;place-items:center;margin-top:1px;color:transparent}
+button.chk{cursor:pointer;padding:0}
+button.chk:hover{border-color:var(--done)}
+button.chk:disabled{opacity:.5;cursor:wait}
 .item.done .chk{background:var(--done);border-color:var(--done);color:var(--bg)}
 .chk svg{width:14px;height:14px}
 .ibody{min-width:0;display:flex;flex-direction:column;gap:6px}
@@ -131,7 +134,7 @@ const UPLOAD_URL="https://script.google.com/macros/s/AKfycbz_-cjKe0DgWbf_xGrWQ65
 //#endregion
 
 //#region Durum ve yardımcılar
-const S={data:{},tab:SECTIONS[0],sel:{},filter:"all",error:null,up:{},shown:[]};
+const S={data:{},tab:SECTIONS[0],sel:{},filter:"all",error:null,up:{},shown:[],ticks:{}};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const CHECK='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 4.5"/></svg>';
@@ -196,6 +199,13 @@ async function load(){
       return[s,toItems(parseCSV(t))];
     }));
     S.data=Object.fromEntries(res);S.error=null;
+    // Yeni atılan tikler tabloya geç yansıyabilir; 2 dakika boyunca sitedeki son hali koru
+    const now=Date.now();
+    for(const [k,o] of Object.entries(S.ticks)){
+      if(now-o.t>120000){delete S.ticks[k];continue}
+      const [tab]=k.split("|");const it=(S.data[tab]||[]).find(x=>keyOf(tab,x)===k);
+      if(it){it.done=o.done;it.doneAt=o.doneAt}
+    }
     $("upd").textContent="Güncellendi "+new Date().toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"});
   }catch(e){
     S.error=e;$("upd").textContent="Bağlantı hatası";
@@ -237,7 +247,7 @@ function render(){
     <div class="seg" role="group" aria-label="Filtre">${seg("all","Tümü")}${seg("open","Bekleyen")}${seg("done","Yapıldı")}</div>
     <div class="items">${shown.length?shown.map((it,ix)=>`
       <article class="item${it.done?" done":""}">
-        <span class="chk" aria-label="${it.done?"Yapıldı":"Bekliyor"}">${CHECK}</span>
+        ${UPLOAD_URL?`<button class="chk" data-tick="${ix}" aria-pressed="${it.done}" aria-label="${it.done?"Yapılmadı olarak işaretle":"Yapıldı olarak işaretle"}" ${it.busy?"disabled":""}>${CHECK}</button>`:`<span class="chk" aria-label="${it.done?"Yapıldı":"Bekliyor"}">${CHECK}</span>`}
         <div class="ibody">
           <div class="ititle"><span class="no">Madde ${esc(it.no)}</span><span>${esc(it.title)}</span></div>
           ${it.sorun?`<div class="row"><b>${/talep/i.test(it.tur)?"Talep":"Sorun"}</b>${esc(it.sorun)}</div>`:""}
@@ -251,20 +261,51 @@ function render(){
 //#endregion
 
 //#region Görsel yükleme
-let upTarget=null;
+let upTarget=null,afterPin=null;
 const getPin=()=>{try{return localStorage.getItem("gt_pin")||""}catch(e){return""}};
 const setPin=v=>{try{v?localStorage.setItem("gt_pin",v):localStorage.removeItem("gt_pin")}catch(e){}};
 // Butona basınca: şifre yoksa sor, sonra dosya seçtir
 function startUpload(it){
   if(!it)return;
   upTarget={tab:S.tab,it};
-  if(getPin()){$("fileIn").value="";$("fileIn").click();return}
-  $("pinIn").value="";$("pinDlg").showModal();
+  withPin(()=>{$("fileIn").value="";$("fileIn").click()});
+}
+// Şifre kayıtlıysa işi hemen yap, değilse önce şifre sor
+function withPin(fn){
+  if(getPin()){fn();return}
+  afterPin=fn;$("pinIn").value="";$("pinDlg").showModal();
 }
 $("pinDlg").addEventListener("close",()=>{
-  if($("pinDlg").returnValue!=="ok"||!$("pinIn").value.trim())return;
-  setPin($("pinIn").value.trim());$("fileIn").value="";$("fileIn").click();
+  const fn=afterPin;afterPin=null;
+  if($("pinDlg").returnValue!=="ok"||!$("pinIn").value.trim()||!fn)return;
+  setPin($("pinIn").value.trim());fn();
 });
+// Servise istek gönder (text/plain: tarayıcı ön kontrol yapmasın)
+async function callApi(body){
+  const r=await fetch(UPLOAD_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({sifre:getPin(),...body})});
+  return r.json();
+}
+// Tik: Yapıldı <-> Bekliyor
+function startTick(it){
+  if(!it||it.busy)return;
+  const tab=S.tab;
+  withPin(async()=>{
+    const prev={done:it.done,doneAt:it.doneAt};
+    const now=new Date();
+    it.done=!it.done;it.doneAt=it.done?`${String(now.getDate()).padStart(2,"0")}.${String(now.getMonth()+1).padStart(2,"0")}.${now.getFullYear()}`:"";
+    it.busy=true;render();
+    try{
+      const j=await callApi({islem:"durum",sekme:tab,no:it.no,baslik:it.title,yapildi:it.done});
+      if(j.ok)S.ticks[keyOf(tab,it)]={done:it.done,doneAt:it.doneAt,t:Date.now()};
+      if(!j.ok){
+        Object.assign(it,prev);
+        if(j.hata==="sifre"){setPin("");alert("Şifre yanlış. Tekrar dene.")}
+        else alert("Kaydedilemedi: "+j.hata);
+      }
+    }catch(e){Object.assign(it,prev);alert("Kaydedilemedi. Bağlantını kontrol edip tekrar dene.")}
+    it.busy=false;render();
+  });
+}
 // Görseli en fazla 1600px'e küçültüp JPEG'e çevir (yükleme hızlı olsun)
 function shrink(file){
   return new Promise((res,rej)=>{
@@ -288,9 +329,7 @@ $("fileIn").addEventListener("change",async()=>{
     try{
       const dataUrl=await shrink(files[i]);
       // text/plain gönderiyoruz ki tarayıcı ön kontrol (CORS preflight) yapmasın
-      const r=await fetch(UPLOAD_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
-        body:JSON.stringify({sifre:getPin(),sekme:tab,no:it.no,baslik:it.title,ad:files[i].name.replace(/\.\w+$/,"")+".jpg",data:dataUrl.split(",")[1]})});
-      const j=await r.json();
+      const j=await callApi({sekme:tab,no:it.no,baslik:it.title,ad:files[i].name.replace(/\.\w+$/,"")+".jpg",data:dataUrl.split(",")[1]});
       if(!j.ok){
         if(j.hata==="sifre"){setPin("");S.up[key]={err:true,msg:"Şifre yanlış. Tekrar dene."};render();return}
         throw new Error(j.hata||"hata");
@@ -314,6 +353,7 @@ document.addEventListener("click",e=>{
     document.body.appendChild(lb);return;
   }
   if(b.dataset.up!==undefined){startUpload(S.shown[+b.dataset.up]);return}
+  if(b.dataset.tick!==undefined){startTick(S.shown[+b.dataset.tick]);return}
   if(b.dataset.tab){S.tab=b.dataset.tab;history.replaceState(null,"","#"+encodeURIComponent(S.tab));render()}
   else if(b.dataset.date){S.sel[S.tab]=b.dataset.date;render()}
   else if(b.dataset.filter){S.filter=b.dataset.filter;render()}
