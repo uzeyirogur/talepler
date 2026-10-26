@@ -137,10 +137,19 @@ function toItems(rows){
   const ix={tarih:col("tarih"),no:col("no"),baslik:col("başlık"),tur:col("tür"),sorun:col("sorun"),bek:col("beklenen"),durum:col("durum"),ydt:col("yapıldı"),gorsel:col("görsel")};
   const g=(r,k)=>ix[k]>=0?(r[ix[k]]||"").trim():"";
   return rows.slice(1).filter(r=>g(r,"baslik")).map(r=>({
-    tarih:g(r,"tarih")||"Tarihsiz",no:g(r,"no"),title:g(r,"baslik"),tur:g(r,"tur"),
-    sorun:g(r,"sorun"),beklenen:g(r,"bek"),done:isDone(g(r,"durum")),doneAt:g(r,"ydt"),
+    tarih:fixDate(g(r,"tarih"))||"Tarihsiz",no:g(r,"no"),title:g(r,"baslik"),tur:g(r,"tur"),
+    sorun:g(r,"sorun"),beklenen:g(r,"bek"),done:isDone(g(r,"durum")),doneAt:fixDate(g(r,"ydt")),
     imgs:imgLinks(g(r,"gorsel"))
   }));
+}
+// Tablo tarihi sayı olarak verirse (ör. 46320) gg.aa.yyyy'ye çevir; ISO tarihleri de çevir
+function fixDate(v){
+  if(/^\d{5}(\.\d+)?$/.test(v)){
+    const d=new Date(Date.UTC(1899,11,30)+Math.floor(+v)*864e5);
+    return `${String(d.getUTCDate()).padStart(2,"0")}.${String(d.getUTCMonth()+1).padStart(2,"0")}.${d.getUTCFullYear()}`;
+  }
+  const m=v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m?`${m[3]}.${m[2]}.${m[1]}`:v;
 }
 // Görsel hücresindeki linkleri ayır; Drive linklerini gösterilebilir adrese çevir
 function imgLinks(cell){
