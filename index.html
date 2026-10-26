@@ -68,6 +68,21 @@ button{font:inherit;cursor:pointer}
 .lb{position:fixed;inset:0;background:rgba(0,0,0,.85);display:grid;place-items:center;z-index:50;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
 .lb img{max-width:100%;max-height:100%;border-radius:8px;background:#fff}
 .lb .x{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));right:12px;border:0;background:#fff;color:#111;border-radius:999px;width:40px;height:40px;font-size:22px;line-height:1}
+.up-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.up-btn{border:1px dashed var(--accent);background:none;color:var(--accent);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;min-height:36px}
+.up-btn:hover{background:var(--accent-soft)}
+.up-btn:disabled{opacity:.6;cursor:default}
+.up-msg{font-size:12px;color:var(--muted)}
+.up-msg.err{color:var(--danger)}
+dialog{border:1px solid var(--line);border-radius:12px;padding:20px;background:var(--surface);color:var(--fg);width:min(360px,calc(100vw - 32px))}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+dialog form{display:flex;flex-direction:column;gap:12px;margin:0}
+dialog h4{margin:0;font-size:17px}
+dialog p{margin:0;font-size:13px;color:var(--muted)}
+dialog input{font:inherit;font-size:15px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+dialog .acts{display:flex;gap:8px;justify-content:flex-end}
+dialog button{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:8px;padding:8px 14px;font-weight:600}
+dialog button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
 .empty{border:1px dashed var(--line);border-radius:12px;padding:28px 20px;text-align:center;color:var(--muted)}
 .empty strong{display:block;color:var(--fg);margin-bottom:4px}
 @media (max-width:760px){
@@ -95,6 +110,15 @@ button{font:inherit;cursor:pointer}
     <section class="main" id="main"><div class="empty"><strong>Talepler yükleniyor</strong>Tablo okunuyor.</div></section>
   </div>
 </div>
+<input type="file" id="fileIn" accept="image/*" multiple hidden>
+<dialog id="pinDlg">
+  <form method="dialog" id="pinForm">
+    <h4>Görsel yükleme şifresi</h4>
+    <p>Görsel eklemek için yetkili şifresini gir. Bu cihazda hatırlanır.</p>
+    <input id="pinIn" type="password" autocomplete="current-password" required>
+    <div class="acts"><button value="cancel" formnovalidate>Vazgeç</button><button class="pri" value="ok">Devam</button></div>
+  </form>
+</dialog>
 
 <script>
 //#region Ayarlar
@@ -102,15 +126,18 @@ button{font:inherit;cursor:pointer}
 const SHEET_ID="1hXGcX848sVQWQ4wWBAPlwVQtdrApL4H6CoxajmXY-eg";
 const SECTIONS=["Mobil","Entegre","E-Ticaret"];
 const REFRESH_MS=60000; // dakikada bir yenile
+// Görsel yükleme servisi (Google Apps Script web uygulaması adresi). Boşsa "Görsel ekle" butonu görünmez
+const UPLOAD_URL="";
 //#endregion
 
 //#region Durum ve yardımcılar
-const S={data:{},tab:SECTIONS[0],sel:{},filter:"all",error:null};
+const S={data:{},tab:SECTIONS[0],sel:{},filter:"all",error:null,up:{},shown:[]};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const CHECK='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 4.5"/></svg>';
 // "23.10.2026" -> "2026-10-23" (sıralama için)
 const sortKey=d=>{const m=String(d).match(/(\d{1,2})[./](\d{1,2})[./](\d{4})/);return m?`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`:String(d)};
+const keyOf=(tab,it)=>tab+"|"+it.no+"|"+it.title;
 const isDone=v=>/yap[ıi]ld[ıi]|true|evet|✓/i.test(String(v||""));
 try{const h=decodeURIComponent(location.hash.slice(1));if(SECTIONS.includes(h))S.tab=h}catch(e){}
 //#endregion
@@ -199,6 +226,7 @@ function render(){
   const all=groups[sel].slice().sort((a,b)=>(+a.no||0)-(+b.no||0));
   const done=all.filter(i=>i.done).length,pct=Math.round(done/all.length*100);
   const shown=all.filter(i=>S.filter==="all"||(S.filter==="done"?i.done:!i.done));
+  S.shown=shown;
   const seg=(k,l)=>`<button data-filter="${k}" aria-pressed="${S.filter===k}">${l}</button>`;
   main.innerHTML=`
     <div class="main-head"><span class="date">${esc(sel)}</span><h3>${esc(S.tab)} Talepleri</h3></div>
@@ -207,7 +235,7 @@ function render(){
       <div class="bar"><i style="width:${pct}%"></i></div>
     </div>
     <div class="seg" role="group" aria-label="Filtre">${seg("all","Tümü")}${seg("open","Bekleyen")}${seg("done","Yapıldı")}</div>
-    <div class="items">${shown.length?shown.map(it=>`
+    <div class="items">${shown.length?shown.map((it,ix)=>`
       <article class="item${it.done?" done":""}">
         <span class="chk" aria-label="${it.done?"Yapıldı":"Bekliyor"}">${CHECK}</span>
         <div class="ibody">
@@ -215,10 +243,64 @@ function render(){
           ${it.sorun?`<div class="row"><b>${/talep/i.test(it.tur)?"Talep":"Sorun"}</b>${esc(it.sorun)}</div>`:""}
           ${it.beklenen?`<div class="row"><b>Beklenen</b>${esc(it.beklenen)}</div>`:""}
           ${it.imgs.length?`<div class="imgs">${it.imgs.map((im,k)=>`<button data-full="${esc(im.full)}" aria-label="Görsel ${k+1} büyüt"><img src="${esc(im.thumb)}" alt="Görsel ${k+1}" loading="lazy"></button>`).join("")}</div>`:""}
+          ${UPLOAD_URL?(()=>{const u=S.up[keyOf(S.tab,it)];return`<div class="up-row"><button class="up-btn" data-up="${ix}" ${u&&u.busy?"disabled":""}>+ Görsel ekle</button>${u?`<span class="up-msg${u.err?" err":""}">${esc(u.msg)}</span>`:""}</div>`})():""}
           <div class="meta"><span class="pill">${it.done?"Yapıldı"+(it.doneAt?" · "+esc(it.doneAt):""):"Bekliyor"}</span></div>
         </div>
       </article>`).join(""):'<div class="empty">Bu filtrede madde yok.</div>'}</div>`;
 }
+//#endregion
+
+//#region Görsel yükleme
+let upTarget=null;
+const getPin=()=>{try{return localStorage.getItem("gt_pin")||""}catch(e){return""}};
+const setPin=v=>{try{v?localStorage.setItem("gt_pin",v):localStorage.removeItem("gt_pin")}catch(e){}};
+// Butona basınca: şifre yoksa sor, sonra dosya seçtir
+function startUpload(it){
+  if(!it)return;
+  upTarget={tab:S.tab,it};
+  if(getPin()){$("fileIn").value="";$("fileIn").click();return}
+  $("pinIn").value="";$("pinDlg").showModal();
+}
+$("pinDlg").addEventListener("close",()=>{
+  if($("pinDlg").returnValue!=="ok"||!$("pinIn").value.trim())return;
+  setPin($("pinIn").value.trim());$("fileIn").value="";$("fileIn").click();
+});
+// Görseli en fazla 1600px'e küçültüp JPEG'e çevir (yükleme hızlı olsun)
+function shrink(file){
+  return new Promise((res,rej)=>{
+    const img=new Image(),url=URL.createObjectURL(file);
+    img.onload=()=>{
+      const k=Math.min(1,1600/Math.max(img.width,img.height));
+      const c=document.createElement("canvas");c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);
+      const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,c.width,c.height);x.drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url);res(c.toDataURL("image/jpeg",0.85));
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error("okunamadı"))};
+    img.src=url;
+  });
+}
+$("fileIn").addEventListener("change",async()=>{
+  const files=[...$("fileIn").files];if(!files.length||!upTarget)return;
+  const {tab,it}=upTarget,key=keyOf(tab,it);
+  let ok=0;
+  for(let i=0;i<files.length;i++){
+    S.up[key]={busy:true,msg:`Yükleniyor ${i+1}/${files.length}…`};render();
+    try{
+      const dataUrl=await shrink(files[i]);
+      // text/plain gönderiyoruz ki tarayıcı ön kontrol (CORS preflight) yapmasın
+      const r=await fetch(UPLOAD_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+        body:JSON.stringify({sifre:getPin(),sekme:tab,no:it.no,baslik:it.title,ad:files[i].name.replace(/\.\w+$/,"")+".jpg",data:dataUrl.split(",")[1]})});
+      const j=await r.json();
+      if(!j.ok){
+        if(j.hata==="sifre"){setPin("");S.up[key]={err:true,msg:"Şifre yanlış. Tekrar dene."};render();return}
+        throw new Error(j.hata||"hata");
+      }
+      it.imgs.push({thumb:dataUrl,full:dataUrl});ok++;
+    }catch(e){S.up[key]={err:true,msg:"Yüklenemedi. Bağlantını kontrol edip tekrar dene."};render();return}
+  }
+  S.up[key]={msg:`${ok} görsel eklendi.`};render();
+  setTimeout(()=>{delete S.up[key];load()},5000);
+});
 //#endregion
 
 //#region Olaylar
@@ -231,6 +313,7 @@ document.addEventListener("click",e=>{
     lb.innerHTML=`<button class="x" aria-label="Kapat">×</button><img src="${esc(b.dataset.full)}" alt="">`;
     document.body.appendChild(lb);return;
   }
+  if(b.dataset.up!==undefined){startUpload(S.shown[+b.dataset.up]);return}
   if(b.dataset.tab){S.tab=b.dataset.tab;history.replaceState(null,"","#"+encodeURIComponent(S.tab));render()}
   else if(b.dataset.date){S.sel[S.tab]=b.dataset.date;render()}
   else if(b.dataset.filter){S.filter=b.dataset.filter;render()}
