@@ -83,9 +83,11 @@ dialog form{display:flex;flex-direction:column;gap:12px;margin:0}
 dialog h4{margin:0;font-size:17px}
 dialog p{margin:0;font-size:13px;color:var(--muted)}
 dialog input{font:inherit;font-size:15px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
-dialog .acts{display:flex;gap:8px;justify-content:flex-end}
+dialog .acts{display:flex;flex-direction:row-reverse;gap:8px;justify-content:flex-start}
 dialog button{border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:8px;padding:8px 14px;font-weight:600}
 dialog button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;z-index:60;max-width:calc(100vw - 32px)}
+.toast.err{background:var(--danger)}
 .empty{border:1px dashed var(--line);border-radius:12px;padding:28px 20px;text-align:center;color:var(--muted)}
 .empty strong{display:block;color:var(--fg);margin-bottom:4px}
 @media (max-width:760px){
@@ -113,13 +115,14 @@ dialog button.pri{background:var(--accent);border-color:var(--accent);color:#fff
     <section class="main" id="main"><div class="empty"><strong>Talepler yükleniyor</strong>Tablo okunuyor.</div></section>
   </div>
 </div>
+<div class="toast" id="toast" hidden></div>
 <input type="file" id="fileIn" accept="image/*" multiple hidden>
 <dialog id="pinDlg">
   <form method="dialog" id="pinForm">
-    <h4>Görsel yükleme şifresi</h4>
-    <p>Görsel eklemek için yetkili şifresini gir. Bu cihazda hatırlanır.</p>
+    <h4>Yetkili şifresi</h4>
+    <p id="pinMsg">Tik atmak ve görsel eklemek için şifreyi gir. Bu cihazda hatırlanır.</p>
     <input id="pinIn" type="password" autocomplete="current-password" required>
-    <div class="acts"><button value="cancel" formnovalidate>Vazgeç</button><button class="pri" value="ok">Devam</button></div>
+    <div class="acts"><button class="pri" value="ok">Devam</button><button value="cancel" formnovalidate>Vazgeç</button></div>
   </form>
 </dialog>
 
@@ -262,6 +265,8 @@ function render(){
 
 //#region Görsel yükleme
 let upTarget=null,afterPin=null;
+// Kısa bilgi mesajı
+function toast(msg,err){const t=$("toast");t.textContent=msg;t.className="toast"+(err?" err":"");t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,3000)}
 const getPin=()=>{try{return localStorage.getItem("gt_pin")||""}catch(e){return""}};
 const setPin=v=>{try{v?localStorage.setItem("gt_pin",v):localStorage.removeItem("gt_pin")}catch(e){}};
 // Butona basınca: şifre yoksa sor, sonra dosya seçtir
@@ -296,13 +301,13 @@ function startTick(it){
     it.busy=true;render();
     try{
       const j=await callApi({islem:"durum",sekme:tab,no:it.no,baslik:it.title,yapildi:it.done});
-      if(j.ok)S.ticks[keyOf(tab,it)]={done:it.done,doneAt:it.doneAt,t:Date.now()};
+      if(j.ok){S.ticks[keyOf(tab,it)]={done:it.done,doneAt:it.doneAt,t:Date.now()};toast(it.done?"Yapıldı olarak işaretlendi":"Bekliyor'a alındı")}
       if(!j.ok){
         Object.assign(it,prev);
-        if(j.hata==="sifre"){setPin("");alert("Şifre yanlış. Tekrar dene.")}
-        else alert("Kaydedilemedi: "+j.hata);
+        if(j.hata==="sifre"){setPin("");toast("Şifre yanlış. Tekrar dene.",true)}
+        else toast("Kaydedilemedi: "+j.hata,true);
       }
-    }catch(e){Object.assign(it,prev);alert("Kaydedilemedi. Bağlantını kontrol edip tekrar dene.")}
+    }catch(e){Object.assign(it,prev);toast("Kaydedilemedi. Bağlantını kontrol edip tekrar dene.",true)}
     it.busy=false;render();
   });
 }
