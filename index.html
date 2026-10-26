@@ -192,8 +192,21 @@ function fixDate(v){
 function imgLinks(cell){
   return (cell.match(/https?:\/\/[^\s,;]+/g)||[]).map(u=>{
     const m=u.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:export=\w+&)?id=)([\w-]+)/);
-    return m?{ref:m[1],thumb:`https://drive.google.com/thumbnail?id=${m[1]}&sz=w400`,full:`https://drive.google.com/thumbnail?id=${m[1]}&sz=w2000`}:{ref:u,thumb:u,full:u};
+    return m?{ref:m[1],thumb:`https://lh3.googleusercontent.com/d/${m[1]}=w400`,alt:`https://drive.usercontent.google.com/download?id=${m[1]}&export=view`,full:`https://drive.usercontent.google.com/download?id=${m[1]}&export=view`}:{ref:u,thumb:u,full:u};
   });
+}
+async function fetchTab(s){
+  const r=await fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(s)}&_=${Date.now()}`);
+  const t=await r.text();
+  return toItems(parseCSV(t));
+}
+// Servisin cevabı tarayıcıda okunamazsa: birkaç kez tabloya bakıp işlem gerçekleşmiş mi kontrol et
+async function verify(tab,key,check){
+  for(let i=0;i<4;i++){
+    await new Promise(r=>setTimeout(r,2500));
+    try{const it=(await fetchTab(tab)).find(x=>keyOf(tab,x)===key);if(it&&check(it))return true}catch(e){}
+  }
+  return false;
 }
 async function load(){
   try{
@@ -262,7 +275,7 @@ function render(){
           <div class="ititle"><span class="no">Madde ${esc(it.no)}</span><span>${esc(it.title)}</span></div>
           ${it.sorun?`<div class="row"><b>${/talep/i.test(it.tur)?"Talep":"Sorun"}</b>${esc(it.sorun)}</div>`:""}
           ${it.beklenen?`<div class="row"><b>Beklenen</b>${esc(it.beklenen)}</div>`:""}
-          ${it.imgs.length?`<div class="imgs">${it.imgs.map((im,k)=>`<div class="th"><button data-full="${esc(im.full)}" aria-label="Görsel ${k+1} büyüt"><img src="${esc(im.thumb)}" alt="Görsel ${k+1}" loading="lazy"></button>${UPLOAD_URL&&im.ref?`<button class="del" data-del="${ix}:${k}" aria-label="Görsel ${k+1} sil" ${im.busy?"disabled":""}>×</button>`:""}</div>`).join("")}</div>`:""}
+          ${it.imgs.length?`<div class="imgs">${it.imgs.map((im,k)=>`<div class="th"><button data-full="${esc(im.full)}" aria-label="Görsel ${k+1} büyüt"><img src="${esc(im.thumb)}" ${im.alt?`data-alt="${esc(im.alt)}" onerror="if(this.dataset.alt){this.src=this.dataset.alt;this.removeAttribute('data-alt')}"`:""} alt="Görsel ${k+1}" loading="lazy"></button>${UPLOAD_URL&&im.ref?`<button class="del" data-del="${ix}:${k}" aria-label="Görsel ${k+1} sil" ${im.busy?"disabled":""}>×</button>`:""}</div>`).join("")}</div>`:""}
           ${UPLOAD_URL?(()=>{const u=S.up[keyOf(S.tab,it)];return`<div class="up-row"><button class="up-btn" data-up="${ix}" ${u&&u.busy?"disabled":""}>+ Görsel ekle</button>${u?`<span class="up-msg${u.err?" err":""}">${esc(u.msg)}</span>`:""}</div>`})():""}
           <div class="meta"><span class="pill">${it.done?"Yapıldı"+(it.doneAt?" · "+esc(it.doneAt):""):"Bekliyor"}</span></div>
         </div>
@@ -309,7 +322,13 @@ function startTick(it){
     it.done=!it.done;it.doneAt=it.done?`${String(now.getDate()).padStart(2,"0")}.${String(now.getMonth()+1).padStart(2,"0")}.${now.getFullYear()}`:"";
     it.busy=true;render();
     try{
-      const j=await callApi({islem:"durum",sekme:tab,no:it.no,baslik:it.title,yapildi:it.done});
+      let j;
+      try{j=await callApi({islem:"durum",sekme:tab,no:it.no,baslik:it.title,yapildi:it.done})}
+      catch(e){
+        // Cevap okunamadı; durum tabloda değişmiş mi kontrol et
+        const want=it.done;
+        j=(await verify(tab,keyOf(tab,it),x=>x.done===want))?{ok:true}:{ok:false,hata:"sunucuya ulaşılamadı veya şifre yanlış"};
+      }
       if(j.ok){S.ticks[keyOf(tab,it)]={done:it.done,doneAt:it.doneAt,t:Date.now()};toast(it.done?"Yapıldı olarak işaretlendi":"Bekliyor'a alındı")}
       if(!j.ok){
         Object.assign(it,prev);
@@ -353,17 +372,23 @@ $("fileIn").addEventListener("change",async()=>{
   const files=[...$("fileIn").files];if(!files.length||!upTarget)return;
   const {tab,it}=upTarget,key=keyOf(tab,it);
   let ok=0;
+  const before=it.imgs.filter(m=>m.ref).length;
   for(let i=0;i<files.length;i++){
     S.up[key]={busy:true,msg:`Yükleniyor ${i+1}/${files.length}…`};render();
     try{
       const dataUrl=await shrink(files[i]);
       // text/plain gönderiyoruz ki tarayıcı ön kontrol (CORS preflight) yapmasın
-      const j=await callApi({sekme:tab,no:it.no,baslik:it.title,ad:files[i].name.replace(/\.\w+$/,"")+".jpg",data:dataUrl.split(",")[1]});
-      if(!j.ok){
-        throw new Error(j.hata||"hata");
+      let j=null;
+      try{j=await callApi({sekme:tab,no:it.no,baslik:it.title,ad:files[i].name.replace(/\.\w+$/,"")+".jpg",data:dataUrl.split(",")[1]})}
+      catch(e){
+        // Cevap okunamadı; görsel tabloya yazılmış mı kontrol et
+        S.up[key]={busy:true,msg:"Kontrol ediliyor…"};render();
+        if(await verify(tab,key,x=>x.imgs.length>=before+ok+1))j={ok:true};
+        else throw new Error("Sunucuya ulaşılamadı");
       }
+      if(!j.ok)throw new Error(j.hata||"bilinmeyen hata");
       it.imgs.push({thumb:dataUrl,full:dataUrl});ok++;
-    }catch(e){S.up[key]={err:true,msg:"Yüklenemedi. Bağlantını kontrol edip tekrar dene."};render();return}
+    }catch(e){S.up[key]={err:true,msg:"Yüklenemedi ("+e.message+"). Tekrar dene."};render();return}
   }
   S.up[key]={msg:`${ok} görsel eklendi.`};render();
   setTimeout(()=>{delete S.up[key];load()},5000);
