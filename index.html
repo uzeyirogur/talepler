@@ -124,7 +124,7 @@ dialog button.pri{background:var(--accent);border-color:var(--accent);color:#fff
 <dialog id="pinDlg">
   <form method="dialog" id="pinForm">
     <h4>Yetkili şifresi</h4>
-    <p id="pinMsg">Maddeyi işaretlemek veya görsel silmek için şifreyi gir. Bu cihazda hatırlanır.</p>
+    <p id="pinMsg">Yapıldı işaretini kaldırmak için şifreyi gir. Bu cihazda hatırlanır.</p>
     <input id="pinIn" type="password" autocomplete="current-password" required>
     <div class="acts"><button class="pri" value="ok">Devam</button><button value="cancel" formnovalidate>Vazgeç</button></div>
   </form>
@@ -302,7 +302,9 @@ async function callApi(body){
 function startTick(it){
   if(!it||it.busy)return;
   const tab=S.tab;
-  withPin(async()=>{
+  // Tik atmak şifresiz; atılmış tiki kaldırmak şifreli
+  const run=it.done?withPin:(fn=>fn());
+  run(async()=>{
     const prev={done:it.done,doneAt:it.doneAt};
     const now=new Date();
     it.done=!it.done;it.doneAt=it.done?`${String(now.getDate()).padStart(2,"0")}.${String(now.getMonth()+1).padStart(2,"0")}.${now.getFullYear()}`:"";
@@ -338,16 +340,15 @@ function startDelete(it,k){
   const im=it&&it.imgs[k];if(!im||!im.ref||im.busy)return;
   if(!confirm("Bu görsel silinsin mi?"))return;
   const tab=S.tab;
-  withPin(async()=>{
+  (async()=>{
     im.busy=true;render();
     try{
       const j=await callApi({islem:"gorselSil",sekme:tab,no:it.no,baslik:it.title,ref:im.ref});
       if(j.ok){it.imgs.splice(it.imgs.indexOf(im),1);S.dels.push({tab,key:keyOf(tab,it),ref:im.ref,t:Date.now()});toast("Görsel silindi")}
-      else if(j.hata==="sifre"){setPin("");toast("Şifre yanlış. Tekrar dene.",true)}
       else toast("Silinemedi: "+j.hata,true);
     }catch(e){toast("Silinemedi. Bağlantını kontrol edip tekrar dene.",true)}
     im.busy=false;render();
-  });
+  })();
 }
 $("fileIn").addEventListener("change",async()=>{
   const files=[...$("fileIn").files];if(!files.length||!upTarget)return;
